@@ -15,6 +15,7 @@ from app.config.settings import get_settings
 from app.storage.database import init_db, AsyncSessionLocal
 from app.storage.models import RequestRecord
 from app.api.routes import router as api_router
+from app.static_paths import resolve_static_asset
 
 import logging
 from app.storage.redis_client import init_redis, close_redis
@@ -87,7 +88,7 @@ if os.path.exists(STATIC_DIR):
         if full_path.startswith("api/") or full_path.startswith("docs") or full_path.startswith("openapi.json"):
             raise HTTPException(status_code=404, detail="Not Found")
         
-        target_file = os.path.join(STATIC_DIR, full_path)
+        target_file = resolve_static_asset(STATIC_DIR, full_path)
         if os.path.exists(target_file) and os.path.isfile(target_file):
             return FileResponse(target_file)
         return FileResponse(os.path.join(STATIC_DIR, "index.html"))
