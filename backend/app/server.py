@@ -18,6 +18,7 @@ from app.api.routes import router as api_router
 
 import logging
 from app.storage.redis_client import init_redis, close_redis
+from app.spa_paths import resolve_spa_asset
 
 logger = logging.getLogger("model_router.server")
 settings = get_settings()
@@ -87,8 +88,11 @@ if os.path.exists(STATIC_DIR):
         if full_path.startswith("api/") or full_path.startswith("docs") or full_path.startswith("openapi.json"):
             raise HTTPException(status_code=404, detail="Not Found")
         
-        target_file = os.path.join(STATIC_DIR, full_path)
-        if os.path.exists(target_file) and os.path.isfile(target_file):
+        try:
+            target_file = resolve_spa_asset(STATIC_DIR, full_path)
+        except ValueError:
+            raise HTTPException(status_code=403, detail="Access denied") from None
+        if target_file.is_file():
             return FileResponse(target_file)
         return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 else:
