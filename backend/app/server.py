@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -74,24 +75,34 @@ app.include_router(api_router)
 from app.api.routes import traffic_stream as stream_live_traffic
 
 
-# Serve Bundled Frontend (SPA) if static directory exists
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+def mount_spa(app: FastAPI, static_dir: str) -> bool:
+    """Mount a bundled frontend without allowing files outside its root."""
+    static_root = Path(static_dir).resolve()
+    if not static_root.is_dir():
+        return False
 
-if os.path.exists(STATIC_DIR):
-    assets_dir = os.path.join(STATIC_DIR, "assets")
-    if os.path.exists(assets_dir):
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+    assets_dir = static_root / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         if full_path.startswith("api/") or full_path.startswith("docs") or full_path.startswith("openapi.json"):
             raise HTTPException(status_code=404, detail="Not Found")
-        
-        target_file = os.path.join(STATIC_DIR, full_path)
-        if os.path.exists(target_file) and os.path.isfile(target_file):
-            return FileResponse(target_file)
-        return FileResponse(os.path.join(STATIC_DIR, "index.html"))
-else:
+
+        target_file = (static_root / full_path).resolve()
+        if not target_file.is_relative_to(static_root):
+            raise HTTPException(status_code=403, detail="Access denied")
+        if target_file.is_file():
+            return FileResponse(str(target_file))
+        return FileResponse(str(static_root / "index.html"))
+
+    return True
+
+
+# Serve Bundled Frontend (SPA) if static directory exists
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+if not mount_spa(app, STATIC_DIR):
     @app.get("/")
     async def root():
         return {
