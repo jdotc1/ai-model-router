@@ -1,5 +1,7 @@
 """Regression tests for confinement of assets served by the SPA fallback."""
 
+from urllib.parse import unquote
+
 import pytest
 from fastapi import HTTPException
 
@@ -16,11 +18,11 @@ def test_static_asset_and_spa_fallback_remain_within_root(tmp_path):
     assert resolve_static_asset(str(static), "nested/missing.js") == static / "nested/missing.js"
 
 
-@pytest.mark.parametrize("path", ["../private.env", "..%2Fprivate.env", "../../private.env", "/etc/passwd"])
+@pytest.mark.parametrize("path", ["../private.env", "%2e%2e%2fprivate.env", "../../private.env", "/etc/passwd"])
 def test_static_asset_rejects_path_traversal(tmp_path, path):
     static = tmp_path / "static"
     static.mkdir()
-    candidate = path.replace("%2F", "/")
+    candidate = unquote(path)  # ASGI routing receives a URL-decoded path.
 
     with pytest.raises(HTTPException) as error:
         resolve_static_asset(str(static), candidate)
