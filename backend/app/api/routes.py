@@ -802,7 +802,7 @@ def _safe_csv_cell(value: Any) -> Any:
     Only escape string fields. Numeric telemetry retains its native type;
     JSON exports preserve the original values.
     """
-    if isinstance(value, str) and value.lstrip(" \\t\\r\\n\\v\\f\\x00\\ufeff").startswith(("=", "+", "-", "@")):
+    if isinstance(value, str) and value.lstrip(" \t\r\n\v\f\x00\ufeff").startswith(("=", "+", "-", "@")):
         return "'" + value
     return value
 
