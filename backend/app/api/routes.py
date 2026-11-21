@@ -796,6 +796,17 @@ async def traffic_stream():
 
     return EventSourceResponse(in_memory_event_generator())
 
+def _safe_csv_cell(value: Any) -> Any:
+    """Prevent spreadsheet formula execution when opening exported traffic.
+
+    Only escape string fields. Numeric telemetry retains its native type;
+    JSON exports preserve the original values.
+    """
+    if isinstance(value, str) and value.lstrip(" \\t\\r\\n\\v\\f\\x00\\ufeff").startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
+
 @router.get("/api/traffic/export")
 async def export_traffic(
     format: str = Query("json", pattern="^(csv|json)$"),
@@ -842,7 +853,7 @@ async def export_traffic(
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=fields)
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerows([{key: _safe_csv_cell(value) for key, value in row.items()} for row in rows])
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
