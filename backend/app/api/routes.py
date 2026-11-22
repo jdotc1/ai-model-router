@@ -1089,7 +1089,16 @@ async def update_workspace(workspace_id: str, req: WorkspaceUpdateRequest, db: A
 
 # API Keys
 @router.get("/api/keys")
-async def list_api_keys(workspace_id: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def list_api_keys(
+    workspace_id: Optional[str] = None,
+    auth: AuthContext = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
+):
+    # Authenticated workspace keys must never enumerate another tenant's keys.
+    if auth.is_authenticated:
+        if workspace_id is not None and workspace_id != auth.workspace_id:
+            raise HTTPException(status_code=403, detail="Workspace access denied")
+        workspace_id = auth.workspace_id
     query = select(ApiKeyRecord)
     if workspace_id:
         query = query.filter_by(workspace_id=workspace_id)
@@ -1113,7 +1122,13 @@ async def list_api_keys(workspace_id: Optional[str] = None, db: AsyncSession = D
 
 
 @router.post("/api/keys")
-async def create_api_key(req: ApiKeyCreateRequest, db: AsyncSession = Depends(get_db)):
+async def create_api_key(
+    req: ApiKeyCreateRequest,
+    auth: AuthContext = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
+):
+    if auth.is_authenticated and req.workspace_id != auth.workspace_id:
+        raise HTTPException(status_code=403, detail="Workspace access denied")
     # Verify workspace exists
     ws_res = await db.execute(select(WorkspaceRecord).filter_by(id=req.workspace_id))
     if not ws_res.scalar_one_or_none():
@@ -1146,8 +1161,16 @@ async def create_api_key(req: ApiKeyCreateRequest, db: AsyncSession = Depends(ge
 
 
 @router.delete("/api/keys/{key_id}")
-async def revoke_api_key(key_id: str, db: AsyncSession = Depends(get_db)):
-    res = await db.execute(select(ApiKeyRecord).filter_by(id=key_id))
+async def revoke_api_key(
+    key_id: str,
+    auth: AuthContext = Depends(get_auth_context),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(ApiKeyRecord).filter_by(id=key_id)
+    if auth.is_authenticated:
+        # Do not disclose whether a different tenant's key exists.
+        query = query.filter_by(workspace_id=auth.workspace_id)
+    res = await db.execute(query)
     key = res.scalar_one_or_none()
     if not key:
         raise HTTPException(status_code=404, detail="API key not found")

@@ -144,3 +144,58 @@ async def test_auth_required_flag():
             assert "Authentication required" in res.json()["detail"]
         finally:
             settings.AUTH_REQUIRED = orig_auth_req
+
+
+@pytest.mark.asyncio
+async def test_api_key_management_enforces_workspace_boundaries():
+    import uuid
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        other_workspace = f"ws-security-{uuid.uuid4().hex[:10]}"
+        created_workspace = await client.post(
+            "/api/workspaces",
+            json={"id": other_workspace, "name": "Security test workspace"},
+        )
+        assert created_workspace.status_code == 200
+
+        default_key_response = await client.post(
+            "/api/keys", json={"name": "Default tenant", "workspace_id": "default"}
+        )
+        other_key_response = await client.post(
+            "/api/keys", json={"name": "Other tenant", "workspace_id": other_workspace}
+        )
+        assert default_key_response.status_code == 200
+        assert other_key_response.status_code == 200
+        default_key = default_key_response.json()
+        other_key = other_key_response.json()
+
+        previous = settings.AUTH_REQUIRED
+        settings.AUTH_REQUIRED = True
+        try:
+            assert (await client.get("/api/keys")).status_code == 401
+            headers = {"X-API-Key": default_key["key"]}
+            own_list = await client.get("/api/keys", headers=headers)
+            assert own_list.status_code == 200
+            assert default_key["id"] in [row["id"] for row in own_list.json()]
+            assert other_key["id"] not in [row["id"] for row in own_list.json()]
+            assert (
+                await client.get(
+                    "/api/keys", params={"workspace_id": other_workspace}, headers=headers
+                )
+            ).status_code == 403
+            assert (
+                await client.post(
+                    "/api/keys",
+                    json={"name": "Cross tenant key", "workspace_id": other_workspace},
+                    headers=headers,
+                )
+            ).status_code == 403
+            assert (
+                await client.delete(f'/api/keys/{other_key["id"]}', headers=headers)
+            ).status_code == 404
+            assert (
+                await client.delete(f'/api/keys/{default_key["id"]}', headers=headers)
+            ).status_code == 200
+        finally:
+            settings.AUTH_REQUIRED = previous
