@@ -1,5 +1,6 @@
 import time
 import asyncio
+import re
 from typing import List, Optional, Tuple, Dict, Any
 from app.models.schemas import ProviderResponse, ModelMetadata
 from app.providers.registry import provider_registry
@@ -17,6 +18,28 @@ RETRYABLE_ERRORS = [
     "service unavailable",
     "econnreset",
 ]
+
+
+
+# Preserve the distinction between malformed client requests and provider outages.
+# httpx.HTTPStatusError formats status as "Client error '400 ...'" or
+# "Server error '503 ...'"; some adapters report "HTTP 500" instead.
+_HTTP_STATUS = re.compile(
+    r"(?:client|server)\s+error\s+['\"]?([45]\d{2})\b"
+    r"|\b(?:http(?:\s+(?:error|status))?|status(?:_code)?)\s*[:=]?\s*['\"]?([45]\d{2})\b",
+    re.IGNORECASE,
+)
+
+
+def is_provider_outage(error_str: Optional[str]) -> bool:
+    """Count upstream/server or transport failures, never ordinary client 4xx."""
+    if not error_str:
+        return False
+    match = _HTTP_STATUS.search(error_str)
+    if match:
+        status = int(match.group(1) or match.group(2))
+        return status >= 500 or status in (408, 429)
+    return is_retryable(error_str)
 
 
 def is_retryable(error_str: Optional[str]) -> bool:
@@ -72,7 +95,8 @@ async def execute_with_fallback(
 
             if not is_retryable(resp.error) or attempt == max_retries:
                 fallback_reason = resp.error or "Unknown primary model execution error."
-                circuit_breaker.record_failure(current_provider_id)
+                if is_provider_outage(resp.error):
+                    circuit_breaker.record_failure(current_provider_id)
                 break
 
             await asyncio.sleep(0.5 * (attempt + 1))
